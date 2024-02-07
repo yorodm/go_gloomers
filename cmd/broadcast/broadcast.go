@@ -2,19 +2,21 @@ package main
 
 import (
 	"encoding/json"
+	"log"
+	"slices"
 	"sync"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-type ReadBody struct {
+type ReadResponseBody struct {
 	maelstrom.MessageBody
-	Messages []int `json:"messages,omitempty"`
+	Messages []int `json:"messages"`
 }
 
 type BroadcastBody struct {
 	maelstrom.MessageBody
-	Value int `json:"messages,omitempty"`
+	Message int `json:"message,omitempty"`
 }
 
 type TopologyBody struct {
@@ -24,17 +26,17 @@ type TopologyBody struct {
 
 type GossipBody struct {
 	maelstrom.MessageBody
-	Values []int `json:"values,omitempty"`
+	Message int `json:"values,omitempty"`
 }
 
-type void struct {}
+type void struct{}
 
 type State struct {
-	mut          sync.RWMutex
+	mut      sync.RWMutex
 	messages map[int]void
 }
 
-//NewState: create a new State
+// NewState: create a new State
 func NewState() *State {
 	return &State{messages: make(map[int]void)}
 }
@@ -42,25 +44,18 @@ func NewState() *State {
 func (s *State) Messages() []int {
 	s.mut.RLock()
 	defer s.mut.RUnlock()
-	data := make([]int, len(s.messages)) // speed up
-	for key, _ := range s.messages {
+	data := make([]int, 0, len(s.messages)) // speed up
+	for key := range s.messages {
 		data = append(data, key)
 	}
+	slices.Sort(data)
 	return data
 }
 
-func (s *State)Add(v int) {
+func (s *State) Add(v int) {
 	s.mut.Lock()
 	defer s.mut.Unlock()
 	s.messages[v] = void{}
-}
-
-func (s *State)AddAll(v []int) {
-	s.mut.Lock()
-	defer s.mut.Unlock()
-	for _, e := range v {
-		s.messages[e] = void{}
-	}
 }
 
 func deserialize(raw json.RawMessage, v any) error {
@@ -70,44 +65,60 @@ func deserialize(raw json.RawMessage, v any) error {
 	return nil
 }
 
+func gossip(node *maelstrom.Node, value int, neighbours []string) {
+	b := GossipBody{}
+	b.Type = "gossip"
+	b.Message = value
+	for _, n := range neighbours {
+		node.Send(n, b)
+	}
+}
+
 func main() {
 	var neighbours []string
 	state := NewState()
 	node := maelstrom.NewNode()
 	node.Handle("read", func(msg maelstrom.Message) error {
-		var body ReadBody
-		if err := deserialize(msg.Body, &body); err != nil {
-			return err
+		body := ReadResponseBody{
+			Messages: state.Messages(),
 		}
 		body.Type = "read_ok"
-		body.Messages = state.Messages()
-
-		return node.Reply(msg, body)
+		return node.Reply(msg, &body)
 	})
 	node.Handle("broadcast", func(msg maelstrom.Message) error {
 		var body BroadcastBody
-		body.Type = "broadcast_ok"
-		go func() {
-			b := GossipBody {}
-			b.Type = "gossip"
-			b.Values = state.Messages()
-			for _, n := range neighbours {
-				node.Send(n, b)
-			}
-		}()
-		return node.Reply(msg, &body)
+		if err := deserialize(msg.Body, &body); err != nil {
+			return err
+		}
+		state.Add(body.Message)
+		go gossip(node, body.Message, neighbours)
+		reply := map[string]string{
+			"type": "broadcast_ok",
+		}
+		return node.Reply(msg, &reply)
 	})
 	node.Handle("topology", func(msg maelstrom.Message) error {
 		var body TopologyBody
 		if err := deserialize(msg.Body, &body); err != nil {
 			return err
 		}
-		 neighbours = body.Topology[node.ID()]
-		body.Type = "topology_ok"
-		return node.Reply(msg, body)
+		neighbours = body.Topology[node.ID()]
+		reply := map[string]string{
+			"type": "topology_ok",
+		}
+		return node.Reply(msg, &reply)
 	})
 	node.Handle("gossip", func(msg maelstrom.Message) error {
 		var body GossipBody
-		if err := deserialize(msg.Body, &Body)
+		if err := deserialize(msg.Body, &body); err != nil {
+			log.Fatal(err)
+		}
+		state.Add(body.Message)
+		rest := slices.DeleteFunc(neighbours,func(e string) bool {
+			return msg.Src == e
+		})
+		go gossip(node,body.Message,rest)
+		return nil
 	})
+	node.Run()
 }

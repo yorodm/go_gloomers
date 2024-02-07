@@ -6,7 +6,7 @@
 CMD_DIR := ./cmd
 # where to put my targets
 BIN_DIR := ./bin
-TARGETS := echo uniques
+TARGETS := echo uniques broadcast
 export SHELL := /bin/bash # I use fish in macos and zsh on linux
 
 .PHONY: build clean
