@@ -20,12 +20,19 @@ type AddBody struct {
 
 const KEY = "my_g_counter"
 
+func getCurrentSeqKv(s *maelstrom.KV) (int, error) {
+	if value, err := s.ReadInt(context.Background(), KEY); err != nil {
+		return 0, err
+	} else {
+		return value, nil
+	}
+}
+
 func main() {
 	node := maelstrom.NewNode()
 	seqkv := maelstrom.NewSeqKV(node)
-	state := 0
 	node.Handle("read", func(msg maelstrom.Message) error {
-		if value, err := seqkv.ReadInt(context.TODO(), KEY); err != nil {
+		if value, err := seqkv.ReadInt(context.Background(), KEY); err != nil {
 			return err
 		} else {
 			response := ReadResponse{}
@@ -40,9 +47,15 @@ func main() {
 		if err := json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
-		if err := seqkv.CompareAndSwap(context.TODO(), KEY, state, state+body.Delta, true); err != nil {
-			// READ and update state
+		value, err := getCurrentSeqKv(seqkv)
+		if err == nil {
+			// I'm assuming we don't have a counter yet
+			// but this read could have failed because we cannot see
+			// SeqKV, in which case this would require a retry strategy of some
+			// kind
+			seqkv.CompareAndSwap(context.Background(), KEY, value, value + body.Delta, true)
 		}
+
 		return nil
 	})
 }
