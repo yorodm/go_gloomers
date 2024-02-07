@@ -26,7 +26,7 @@ type TopologyBody struct {
 
 type GossipBody struct {
 	maelstrom.MessageBody
-	Message int `json:"values,omitempty"`
+	Values []int `json:"values"`
 }
 
 type void struct{}
@@ -58,6 +58,14 @@ func (s *State) Add(v int) {
 	s.messages[v] = void{}
 }
 
+func (s *State) AddAll(v []int) {
+	s.mut.Lock()
+	defer s.mut.Unlock()
+	for _,e := range v {
+		s.messages[e] = void{}
+	}
+}
+
 func deserialize(raw json.RawMessage, v any) error {
 	if err := json.Unmarshal(raw, v); err != nil {
 		return err
@@ -65,10 +73,10 @@ func deserialize(raw json.RawMessage, v any) error {
 	return nil
 }
 
-func gossip(node *maelstrom.Node, value int, neighbours []string) {
+func gossip(node *maelstrom.Node, value []int, neighbours []string) {
 	b := GossipBody{}
 	b.Type = "gossip"
-	b.Message = value
+	b.Values = value
 	for _, n := range neighbours {
 		node.Send(n, b)
 	}
@@ -91,7 +99,8 @@ func main() {
 			return err
 		}
 		state.Add(body.Message)
-		go gossip(node, body.Message, neighbours)
+		log.Printf("Vecinos %s", neighbours)
+		go gossip(node, state.Messages(), neighbours)
 		reply := map[string]string{
 			"type": "broadcast_ok",
 		}
@@ -113,11 +122,14 @@ func main() {
 		if err := deserialize(msg.Body, &body); err != nil {
 			log.Fatal(err)
 		}
-		state.Add(body.Message)
-		rest := slices.DeleteFunc(neighbours,func(e string) bool {
-			return msg.Src == e
-		})
-		go gossip(node,body.Message,rest)
+		state.AddAll(body.Values)
+		rest := make([]string,0)
+		for _, n := range neighbours {
+			if n != msg.Src {
+				rest = append(rest, n)
+			}
+		}
+		go gossip(node,state.Messages(),rest)
 		return nil
 	})
 	node.Run()
