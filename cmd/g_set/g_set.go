@@ -101,17 +101,6 @@ func main() {
 		}
 		return node.Reply(msg, &reply)
 	})
-	node.Handle("topology", func(msg maelstrom.Message) error {
-		var body TopologyBody
-		if err := deserialize(msg.Body, &body); err != nil {
-			return err
-		}
-		neighbours = body.Topology[node.ID()]
-		reply := map[string]string{
-			"type": "topology_ok",
-		}
-		return node.Reply(msg, &reply)
-	})
 	node.Handle("gossip", func(msg maelstrom.Message) error {
 		var body GossipBody
 		if err := deserialize(msg.Body, &body); err != nil {
